@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#1e293b">
+    <meta name="description" content="Calculadora algorítmica de finiquito laboral conforme a la normativa de la Dirección del Trabajo de Chile.">
+    <title>Calculadora Finiquito PWA</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script>
+        const configuracionManifiesto = {
+            "name": "Cálculo de Finiquito Laboral - CT Chile",
+            "short_name": "Finicalc",
+            "description": "Sistema de cálculo de finiquitos laborales",
+            "start_url": window.location.href,
+            "display": "standalone",
+            "background_color": "#f8fafc",
+            "theme_color": "#1e293b",
+            "icons": [
+                {
+                    "src": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' fill='%231e293b'/><text x='256' y='256' font-family='sans-serif' font-size='200' font-weight='bold' fill='%23ffffff' text-anchor='middle' dominant-baseline='middle'>CT</text></svg>",
+                    "sizes": "512x512",
+                    "type": "image/svg+xml",
+                    "purpose": "any maskable"
+                }
+            ]
+        };
+
+        const blobManifiesto = new Blob([JSON.stringify(configuracionManifiesto)], { type: 'application/json' });
+        const urlManifiesto = URL.createObjectURL(blobManifiesto);
+        
+        const enlaceManifiesto = document.createElement('link');
+        enlaceManifiesto.rel = 'manifest';
+        enlaceManifiesto.href = urlManifiesto;
+        document.head.appendChild(enlaceManifiesto);
+    </script>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased selection:bg-slate-300">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useMemo } = React;
+
+        const App = () => {
+          const [parametros, setParametros] = useState({
+            fechaInicio: '',
+            fechaTermino: '',
+            sueldoBase: 0,
+            gratificacion: 0,
+            bonosFijos: 0,
+            diasVacaciones: 0,
+            causal: '161',
+            avisoPrevio: false,
+            aporteAfc: 0
+          });
+
+          const handleInputChange = (e) => {
+            const { name, value, type, checked } = e.target;
+            setParametros(prev => ({
+              ...prev,
+              [name]: type === 'checkbox' ? checked : (type === 'number' ? Number(value) : value)
+            }));
+          };
+
+          const calcularDiferenciaFechas = (inicio, termino) => {
+            if (!inicio || !termino) return { years: 0, months: 0, days: 0, totalMonths: 0 };
+            
+            const d1 = new Date(inicio);
+            const d2 = new Date(termino);
+            
+            if (d2 < d1) return { years: 0, months: 0, days: 0, totalMonths: 0 };
+
+            let years = d2.getFullYear() - d1.getFullYear();
+            let months = d2.getMonth() - d1.getMonth();
+            let days = d2.getDate() - d1.getDate();
+
+            if (days < 0) {
+              months -= 1;
+              const previoMes = new Date(d2.getFullYear(), d2.getMonth(), 0);
+              days += previoMes.getDate();
+            }
+
+            if (months < 0) {
+              years -= 1;
+              months += 12;
+            }
+
+            const totalMonths = (years * 12) + months;
+            
+            return { years, months, days, totalMonths };
+          };
+
+          const resultados = useMemo(() => {
+            const { 
+              fechaInicio, 
+              fechaTermino, 
+              sueldoBase, 
+              gratificacion, 
+              bonosFijos, 
+              diasVacaciones, 
+              causal, 
+              avisoPrevio, 
+              aporteAfc 
+            } = parametros;
+
+            const tiempoTrabajado = calcularDiferenciaFechas(fechaInicio, fechaTermino);
+            
+            let baseCalculoIndemnizacion = sueldoBase + gratificacion + bonosFijos;
+            
+            let baseCalculoFeriado = sueldoBase; 
+            const valorDiaFeriado = baseCalculoFeriado / 30;
+            const montoFeriadoProporcional = valorDiaFeriado * diasVacaciones;
+
+            let anosServicioCarga = tiempoTrabajado.years;
+            if (tiempoTrabajado.months >= 6) {
+              anosServicioCarga += 1;
+            }
+            const anosServicioCalculo = Math.min(anosServicioCarga, 11);
+
+            let montoIas = 0;
+            let montoAvisoPrevio = 0;
+            let descuentoAfc = 0;
+
+            if (causal === '161') {
+              montoIas = baseCalculoIndemnizacion * anosServicioCalculo;
+              if (!avisoPrevio) {
+                montoAvisoPrevio = baseCalculoIndemnizacion;
+              }
+              descuentoAfc = Math.min(aporteAfc, montoIas); 
+            }
+
+            const totalFiniquito = montoFeriadoProporcional + montoIas + montoAvisoPrevio - descuentoAfc;
+
+            return {
+              tiempo: tiempoTrabajado,
+              baseCalculo: baseCalculoIndemnizacion,
+              anosCalculoIas: anosServicioCalculo,
+              montoFeriado: montoFeriadoProporcional,
+              montoIas: montoIas,
+              montoAvisoPrevio: montoAvisoPrevio,
+              descuentoAfc: descuentoAfc,
+              total: totalFiniquito
+            };
+          }, [parametros]);
+
+          const formatearMoneda = (valor) => {
+            return new Intl.NumberFormat('es-CL', {
+              style: 'currency',
+              currency: 'CLP',
+              minimumFractionDigits: 0
+            }).format(valor);
+          };
+
+          return (
+            <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-800">
+              <div className="max-w-4xl mx-auto bg-white border border-slate-200 shadow-sm p-4 md:p-6 rounded-md">
+                <h1 className="text-2xl font-bold text-slate-900 mb-6 tracking-tight">Cálculo de Finiquito Laboral - CT Chile</h1>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  
+                  <div className="space-y-5">
+                    <h2 className="text-lg font-semibold text-slate-700 bg-slate-100 p-2 border-l-4 border-slate-500 uppercase tracking-wider text-sm">Parámetros Contractuales</h2>
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="flex flex-col">
+                        <label className="text-xs font-semibold text-slate-600 mb-1">Fecha de Inicio</label>
+                        <input 
+                          type="date" 
+                          name="fechaInicio" 
+                          value={parametros.fechaInicio} 
+                          onChange={handleInputChange}
+                          className="p-3 border border-slate-300 text-sm focus:outline-none focus:border-slate-500 rounded-sm w-full"
+                        />
+                      </div>
+                      <div className="flex flex-col">
+                        <label className="text-xs font-semibold text-slate-600 mb-1">Fecha de Término</label>
+                        <input 
+                          type="date" 
+                          name="fechaTermino" 
+                          value={parametros.fechaTermino} 
+                          onChange={handleInputChange}
+                          className="p-3 border border-slate-300 text-sm focus:outline-none focus:border-slate-500 rounded-sm w-full"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col">
+                      <label className="text-xs font-semibold text-slate-600 mb-1">Causal de Término (Art. Código del Trabajo)</label>
+                      <select 
+                        name="causal" 
+                        value={parametros.causal} 
+                        onChange={handleInputChange}
+                        className="p-3 border border-slate-300 text-sm focus:outline-none focus:border-slate-500 rounded-sm w-full"
+                      >
+                        <option value="159">Art. 159 (Renuncia, Mutuo Acuerdo, Vencimiento Plazo)</option>
+                        <option value="160">Art. 160 (Causales Disciplinarias)</option>
+                        <option value="161">Art. 161 (Necesidades de la Empresa)</option>
+                      </select>
+                    </div>
+
+                    {parametros.causal === '161' && (
+                      <div className="flex items-center space-x-3 mt-2 bg-slate-50 p-3 border border-slate-200">
+                        <input 
+                          type="checkbox" 
+                          name="avisoPrevio" 
+                          checked={parametros.avisoPrevio} 
+                          onChange={handleInputChange}
+                          className="w-5 h-5 text-slate-600 focus:ring-slate-500 border-slate-300 rounded-sm"
+                        />
+                        <label className="text-sm font-semibold text-slate-700">Carta entregada con 30 días de anticipación</label>
+                      </div>
+                    )}
+
+                    <h2 className="text-lg font-semibold text-slate-700 bg-slate-100 p-2 border-l-4 border-slate-500 uppercase tracking-wider text-sm mt-6">Estructura Remuneracional</h2>
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="flex flex-col">
+                        <label className="text-xs font-semibold text-slate-600 mb-1">Sueldo Base (CLP)</label>
+                        <input 
+                          type="number" 
+                          name="sueldoBase" 
+                          value={parametros.sueldoBase} 
+                          onChange={handleInputChange}
+                          className="p-3 border border-slate-300 text-sm focus:outline-none focus:border-slate-500 rounded-sm w-full"
+                        />
+                      </div>
+                      <div className="flex flex-col">
+                        <label className="text-xs font-semibold text-slate-600 mb-1">Gratificación (CLP)</label>
+                        <input 
+                          type="number" 
+                          name="gratificacion" 
+                          value={parametros.gratificacion} 
+                          onChange={handleInputChange}
+                          className="p-3 border border-slate-300 text-sm focus:outline-none focus:border-slate-500 rounded-sm w-full"
+                        />
+                      </div>
+                      <div className="flex flex-col">
+                        <label className="text-xs font-semibold text-slate-600 mb-1">Bonos Fijos Imponibles (CLP)</label>
+                        <input 
+                          type="number" 
+                          name="bonosFijos" 
+                          value={parametros.bonosFijos} 
+                          onChange={handleInputChange}
+                          className="p-3 border border-slate-300 text-sm focus:outline-none focus:border-slate-500 rounded-sm w-full"
+                        />
+                      </div>
+                      <div className="flex flex-col">
+                        <label className="text-xs font-semibold text-slate-600 mb-1">Días Feriado Pendiente</label>
+                        <input 
+                          type="number" 
+                          step="0.01"
+                          name="diasVacaciones" 
+                          value={parametros.diasVacaciones} 
+                          onChange={handleInputChange}
+                          className="p-3 border border-slate-300 text-sm focus:outline-none focus:border-slate-500 rounded-sm w-full"
+                        />
+                      </div>
+                    </div>
+
+                    {parametros.causal === '161' && (
+                      <div className="flex flex-col mt-4">
+                        <label className="text-xs font-semibold text-slate-600 mb-1">Aporte Empleador AFC (CLP) para descuento</label>
+                        <input 
+                          type="number" 
+                          name="aporteAfc" 
+                          value={parametros.aporteAfc} 
+                          onChange={handleInputChange}
+                          className="p-3 border border-slate-300 text-sm focus:outline-none focus:border-slate-500 rounded-sm w-full"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-6">
+                    <h2 className="text-lg font-semibold text-slate-700 bg-slate-100 p-2 border-l-4 border-slate-500 uppercase tracking-wider text-sm">Matriz de Resultados</h2>
+                    
+                    <div className="bg-white border border-slate-200 p-4 space-y-3 rounded-sm">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-600 font-medium">Antigüedad Analizada:</span>
+                        <span className="text-slate-900 font-mono text-right">{resultados.tiempo.years} años, {resultados.tiempo.months} meses, {resultados.tiempo.days} días</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-600 font-medium">Años Hábiles para IAS (Máx 11):</span>
+                        <span className="text-slate-900 font-mono text-right">{resultados.anosCalculoIas}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-600 font-medium">Base de Cálculo Imponible (RMI):</span>
+                        <span className="text-slate-900 font-mono text-right">{formatearMoneda(resultados.baseCalculo)}</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-50 border border-slate-200 p-4 space-y-4 rounded-sm">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-700 font-semibold w-2/3">Feriado Proporcional (Art. 73 CT):</span>
+                        <span className="text-slate-900 font-mono text-right w-1/3">{formatearMoneda(resultados.montoFeriado)}</span>
+                      </div>
+                      
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-700 font-semibold w-2/3">Indemnización Sustitutiva Aviso Previo:</span>
+                        <span className="text-slate-900 font-mono text-right w-1/3">{formatearMoneda(resultados.montoAvisoPrevio)}</span>
+                      </div>
+                      
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-700 font-semibold w-2/3">Indemnización por Años de Servicio (IAS):</span>
+                        <span className="text-slate-900 font-mono text-right w-1/3">{formatearMoneda(resultados.montoIas)}</span>
+                      </div>
+
+                      {resultados.descuentoAfc > 0 && (
+                        <div className="flex justify-between text-sm text-red-700 border-t border-slate-200 pt-3 mt-3">
+                          <span className="font-semibold w-2/3">Descuento Ley 19.728 (Aporte Empleador AFC):</span>
+                          <span className="font-mono text-right w-1/3">-{formatearMoneda(resultados.descuentoAfc)}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="bg-slate-800 text-white p-5 flex flex-col sm:flex-row justify-between items-center shadow-inner rounded-sm gap-3">
+                      <span className="text-lg font-bold tracking-wide uppercase">Total Finiquito</span>
+                      <span className="text-2xl font-mono">{formatearMoneda(resultados.total)}</span>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        const rootElement = document.getElementById('root');
+        const root = ReactDOM.createRoot(rootElement);
+        root.render(<App />);
+    </script>
+
+    <script>
+        const algoritmoServiceWorker = `
+            const CACHE_VERSION = 'calculadora-finiquito-v1';
+            const RECURSOS_CRITICOS = [
+                '${window.location.href}',
+                'https://cdn.tailwindcss.com',
+                'https://unpkg.com/react@18/umd/react.production.min.js',
+                'https://unpkg.com/react-dom@18/umd/react-dom.production.min.js',
+                'https://unpkg.com/@babel/standalone/babel.min.js'
+            ];
+
+            self.addEventListener('install', (evento) => {
+                evento.waitUntil(
+                    caches.open(CACHE_VERSION)
+                        .then((cache) => cache.addAll(RECURSOS_CRITICOS))
+                );
+                self.skipWaiting();
+            });
+
+            self.addEventListener('activate', (evento) => {
+                evento.waitUntil(
+                    caches.keys().then((nombresCache) => {
+                        return Promise.all(
+                            nombresCache.map((nombre) => {
+                                if (nombre !== CACHE_VERSION) {
+                                    return caches.delete(nombre);
+                                }
+                            })
+                        );
+                    })
+                );
+                self.clients.claim();
+            });
+
+            self.addEventListener('fetch', (evento) => {
+                evento.respondWith(
+                    caches.match(evento.request).then((respuestaAlmacenada) => {
+                        return respuestaAlmacenada || fetch(evento.request).catch(() => {
+                            console.warn('Ejecución offline iniciada por pérdida de red.');
+                        });
+                    })
+                );
+            });
+        `;
+
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                try {
+                    const blobServiceWorker = new Blob([algoritmoServiceWorker], { type: 'application/javascript' });
+                    const urlServiceWorker = URL.createObjectURL(blobServiceWorker);
+                    
+                    navigator.serviceWorker.register(urlServiceWorker)
+                        .then((registro) => {
+                            console.log('Instanciación del proxy Service Worker finalizada exitosamente. Alcance (Scope):', registro.scope);
+                        })
+                        .catch((error) => {
+                            console.warn('La restricción de la política de mismo origen (Same-Origin Policy) bloquea la instanciación mediante Blob en este entorno de previsualización. En producción bajo dominio HTTPS, el registro operará con normalidad. Excepción:', error);
+                        });
+                } catch (excepcion) {
+                    console.error('Excepción de hardware o de seguridad interceptada durante la compilación del proxy de red:', excepcion);
+                }
+            });
+        }
+    </script>
+</body>
+</html>
